@@ -20,7 +20,7 @@
 -author('Anthony Ramine <n.oxyde@gmail.com>').
 
 -export([start_link/0,
-         start_child/3]).
+         start_child/4]).
 
 -export([init/1]).
 
@@ -35,8 +35,8 @@ start_link() ->
 %% @spec start_child(atom(), env(), string()) -> {ok, Pid} | start_error()
 %% @doc Create an ex_apns child process.
 %%      The resulting process will be locally registered as `Name'.
-start_child(Name, Env, CertFile) ->
-  supervisor:start_child(?MODULE, [Name, Env, CertFile]).
+start_child(Name, Env, CertFile, Password) ->
+  supervisor:start_child(?MODULE, [Name, Env, CertFile, Password]).
 
 
 %% @hidden

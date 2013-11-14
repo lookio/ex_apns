@@ -25,8 +25,9 @@
 
 -export([start/0,
          start/3,
+         start/4,
          stop/1,
-         start_link/3,
+         start_link/4,
          send/3,
          send/4,
          feedback/1,
@@ -40,7 +41,7 @@
          terminate/2,
          code_change/3]).
 
--record(state, {env, certfile, socket, next = 0}).
+-record(state, {env, certfile, password, socket, next = 0}).
 
 %% @equiv application:start(ex_apns)
 start() ->
@@ -51,17 +52,20 @@ start() ->
 %% @doc Create an ex_apns process.
 %%      The resulting process will be locally registered as `Name'.
 start(Name, Env, CertFile) ->
-  ex_apns_sup:start_child(Name, Env, CertFile).
+  ex_apns_sup:start_child(Name, Env, CertFile, undefined).
+
+start(Name, Env, CertFile, Password) ->
+  ex_apns_sup:start_child(Name, Env, CertFile, Password).
 
 %% @doc stop(server_ref()) -> stopped.
 stop(ServerRef) ->
   gen_server:call(ServerRef, stop, infinity).
 
-%% @spec start_link(atom(), env(), string()) -> {ok, Pid} | start_error()
+%% @spec start_link(atom(), env(), string(), string()) -> {ok, Pid} | start_error()
 %% @doc Create an ex_apns process as part of a supervision tree.
 %%      The resulting process will be locally registered as `Name'.
-start_link(Name, Env, CertFile) ->
-  gen_server:start_link({local, Name}, ?MODULE, {Env, CertFile},
+start_link(Name, Env, CertFile, Password) ->
+  gen_server:start_link({local, Name}, ?MODULE, {Env, CertFile, Password},
                         [{timeout, infinity}]).
 
 %% @spec send(server_ref(), token(), payload()) -> ok
@@ -102,15 +106,20 @@ token_to_binary(List) when is_list(List) ->
 
 %% @hidden
 init({Env, CertFile}) ->
-  case connect(env_to_gateway(Env), 2195, CertFile) of
+  case connect(env_to_gateway(Env), 2195, CertFile, undefined) of
     {ok, Socket} ->
-      {ok, #state{env = Env, certfile = CertFile, socket = Socket}};
+      {ok, #state{env = Env, certfile = CertFile, socket = Socket, password = undefined}};
+    {error, Reason} -> {stop, Reason} end;
+init({Env, CertFile, Password}) ->
+  case connect(env_to_gateway(Env), 2195, CertFile, Password) of
+    {ok, Socket} ->
+      {ok, #state{env = Env, certfile = CertFile, socket = Socket, password = Password}};
     {error, Reason} -> {stop, Reason} end.
 
 %% @hidden
 handle_call(feedback_socket, _From,
-            State = #state{env = Env, certfile = CertFile}) ->
-  {reply, connect(env_to_feedback(Env), 2196, CertFile), State};
+            State = #state{env = Env, certfile = CertFile, password = Password}) ->
+  {reply, connect(env_to_feedback(Env), 2196, CertFile, Password), State};
 handle_call(stop, _From, State) ->
   {stop, normal, stopped, State};
 handle_call(_Request, _From, State) ->
@@ -145,21 +154,27 @@ code_change(_OldVsn, State, _Extra) ->
   {ok, State}.
 
 
-%% @spec connect(address(), integer(), string()) -> result()
+%% @spec connect(address(), integer(), string(), string() | undefined) -> result()
 %%       where address() = string() | atom() | inet:ip_address()
 %%             result() = {ok, ssl:socket()} | {error, inet:posix()}
-connect(Address, Port, CertFile) ->
+connect(Address, Port, CertFile, Password) ->
   CaCertFile = filename:join([code:priv_dir(?MODULE), "entrust_2048_ca.cer"]),
-  SslOptions = [binary,
-                {active, false},
-                {certfile, CertFile},
-                {cacertfile, CaCertFile}],
+  SslOptions = get_ssl_options(CertFile, CaCertFile, Password),
   ssl:connect(Address, Port, SslOptions).
 
 %% @spec connect(State::#state{}) -> {ok, #state{}} | {stop, reason()}
 %%       where reason() = closed | inet:posix()
-connect(#state{env = Env, certfile = CertFile}) ->
-  connect(env_to_gateway(Env), 2195, CertFile).
+connect(#state{env = Env, certfile = CertFile, password = Password}) ->
+  connect(env_to_gateway(Env), 2195, CertFile, Password).
+
+get_ssl_options(CertFile, CaCertFile, undefined) ->
+  [binary,
+   {active, false},
+   {certfile, CertFile},
+   {cacertfile, CaCertFile}];
+
+get_ssl_options(CertFile, CaCertFile, Password) ->
+  lists:append(get_ssl_options(CertFile, CaCertFile, undefined), [{password, Password}]).
 
 %% @spec send(iodata(), #state{}) -> {noreply, #state{}} | {stop, reason()}
 %%       where reason() = closed | inet:posix()
